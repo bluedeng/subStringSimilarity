@@ -1,0 +1,2 @@
+# subStringSimilarity
+for substring matching

@@ -235,7 +235,7 @@ int main(int argc, const char* argv[])
 	}
 
 	string stemp = argv[argc - 1];
-	ofstream fout((stemp + "_topk").c_str());
+	ofstream fout((stemp + "_Position").c_str());
 	fout << "K,  Average_max_ed, Average_candidate_number, Average_indextime, Average_querytime, Average_time" << endl;
 
     //in case of we build the index and use it in the same program
@@ -270,7 +270,7 @@ int main(int argc, const char* argv[])
 	for (int j = 0; j < tk.size(); j++) {
 		gl_topk = tk[j];
 
-		ofstream fdetail((stemp + "_topk_" + changeI2S(gl_topk)).c_str());
+		ofstream fdetail((stemp + "_Position_" + changeI2S(gl_topk)).c_str());
 
 		query_time = 0.0;
 		all_time = 0.0;

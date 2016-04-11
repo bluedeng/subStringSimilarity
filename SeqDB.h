@@ -77,10 +77,12 @@ class CSeqDB
 protected:
 #ifdef _WIN32
   typedef typename unordered_map<unsigned, CGramList<InvList>* > GramList;
+  typedef typename unordered_map<unsigned, SPositionList*> PositionList;
   typedef typename unordered_map<unsigned, string> GramIndex;
   typedef typename unordered_map<unsigned, unsigned> FQueue;
 #else
   typedef typename tr1::unordered_map<unsigned, CGramList<InvList>* > GramList;
+  typedef typename tr1::unordered_map<unsigned, SPositionList*> PositionList;
   typedef typename tr1::unordered_map<unsigned, string> GramIndex;
   typedef typename tr1::unordered_map<unsigned, unsigned> FQueue;
 #endif
@@ -94,14 +96,20 @@ protected:
 	vector<string> gramStrUpper;
 	GramList gramListLower;
 
+	PositionList stringPositionList;
+
 	int** edcost;
 	bool* processedData;
 	unsigned** dataCount;
 	unsigned fk;
 
+	//for topkStringSearch
 	vector<int> post_cand_low;
 	vector<int> post_cand_up;
-	// For statistics
+
+	//for topkSubStringSearch
+	vector<int> post_cand;
+
 public:
 	priority_queue<queue_entry> m_queue;
 	CQuery* theQuery;
@@ -131,6 +139,10 @@ public:
 			datasizes.push_back(queue_entry(i, sequences->at(i).length()));
 			this->datasize_groupindex[sequences->at(i).length()] = i;
 			this->processedData[i] = false;
+
+			SPositionList* newPositionList = new SPositionList();
+			newPositionList->getArray()->reserve(datasizes.back().m_dist - this->gramGenUpper->getGramLength() + 1);
+			this->stringPositionList[i] = newPositionList;
 		}
 		this->processed = 0;
 		this->gram_maxed = max_gramed;
@@ -205,6 +217,9 @@ public:
 	{
 		for (unsigned i = 0; i < this->data->size(); i++) {
 			this->processedData[i] = false;
+
+			this->stringPositionList[i]->getArray()->clear();
+
 			for (unsigned j = 0; j < this->gram_maxed; j++)
 				this->dataCount[j][i] = 0;
 		}
@@ -219,6 +234,10 @@ public:
 		if (this->post_cand_up.size() > 0) {
 			vector<int> tmp;
 			swap(this->post_cand_up, tmp);
+		}
+		if (this->post_cand.size() > 0) {
+			vector<int> tmp;
+			swap(this->post_cand, tmp);
 		}
 		this->processed = 0;
 		//this->stop = false;
@@ -252,10 +271,18 @@ public:
 	void gramQuery(const CQuery& query, const unsigned ged, vector< pair<int, vector<unsigned> > >& similarGrams);
 	void getIDBounds(const int querysize, const int threshold, int& idlow, int& idhigh);
 
-	// The fuction for pipe knn search
+	//The fuction for pipe knn search
 	void init_threshold(CQuery& query);
 	void accumulateFrequency(long ged);
 	void knn_postprocess();
+
+	//The function for subStringMatching
+	void simple_initial(CQuery& query);
+	void accmulateFrequencyForSubString(long ged);
+	void subString_process();
+	void subMatching(unsigned id);
+	//all-in-one one-level subStringMatching
+	void allinoneSubString_process();
 
 	void old_version_knn_postprocess();
 };
@@ -597,6 +624,7 @@ void CSeqDB<InvList>::gramQuery(const CQuery& query, const unsigned ged, vector<
 	}
 }
 
+//for topkStringSearching
 template <class InvList>
 void CSeqDB<InvList>::init_threshold(CQuery& query) {
 	int idlow, idhigh, ed;
@@ -621,7 +649,7 @@ void CSeqDB<InvList>::init_threshold(CQuery& query) {
 		if (query.threshold == 0) {
 			return;
 		}
-
+		
 		ed = this->getRealEditDistance_ns(this->data->at(idlow), query.sequence, (int)query.threshold);
 		this->processedData[idlow] = true;
 		this->processed++;
@@ -637,46 +665,41 @@ void CSeqDB<InvList>::init_threshold(CQuery& query) {
 	query.threshold = this->m_queue.top().m_dist;
 }
 
-//knn_postprocess, older version, until 2015-11-25
+// Accumulate the frequency of approximate ngrams
+// the largest value of ged is decided by upper gram length according to the CA strategy
 template <class InvList>
-void CSeqDB<InvList>::old_version_knn_postprocess() {
-	int ed, idlow, idhigh;
-	//unsigned j;
-	idlow = idhigh = -1;
-	this->getIDBounds((int)this->theQuery->length, (int)this->theQuery->threshold, idlow, idhigh);
+void CSeqDB<InvList>::accumulateFrequency(long ged)
+{
+	typename InvList::iterator iterlow, iterhigh;
 
-	if (idlow <= idhigh) {
-		for (int dataCode = idlow; dataCode <= idhigh; dataCode++) {
-			if (this->processedData[dataCode])
-				continue;
+	if (ged == 0) {
+		vector<InvList*> lists;
+		this->getGramLists(this->theQuery->gramCodes, this->gramListUpper, lists);
+		
+		for (unsigned i = 0; i < lists.size(); i++) {
+			iterlow = lists[i]->begin();
+			iterhigh = lists[i]->end();
+			for (; iterlow < iterhigh; iterlow++)
+				if (abs(this->theQuery->gramCodes[i].second - (*iterlow).second) <= this->theQuery->threshold)
+					this->dataCount[ged][(*iterlow).first]++;
+		}
+	}
+	else {
+		vector<InvList*> lists;
+		vector< pair<int, vector<unsigned> > > similarGrams;
+		this->gramQuery(*(this->theQuery), ged, similarGrams);
 
-			if (this->m_queue.size() < this->theQuery->constraint) {
-				ed = this->getRealEditDistance_nsd(this->data->at(dataCode), this->theQuery->sequence);
-				this->processedData[dataCode] = true;
-				this->processed++;
-				this->m_queue.push(queue_entry(dataCode, (unsigned)ed));
-				this->theQuery->threshold = this->m_queue.top().m_dist;
-				continue;
-			}
+		for (unsigned i = 0; i < similarGrams.size(); i++) {
+			lists.clear();
+			vector<unsigned> v(similarGrams[i].second);
+			this->getGramLists(v, this->gramListUpper, lists);
 
-			// Check the bounds on approximate ngrams
-			if (!this->processedData[dataCode] && (int)this->dataCount[0][dataCode] >= this->filter->tabUpQuery[this->theQuery->threshold][0]) {
-				ed = this->getRealEditDistance_ns(this->data->at(dataCode), this->theQuery->sequence, (int)this->theQuery->threshold);
-				this->processedData[dataCode] = true;
-				this->processed++;
-				if (ed < (int)this->theQuery->threshold) {
-					if (this->m_queue.size() == this->theQuery->constraint)
-						this->m_queue.pop();
-					queue_entry tmp_entry(dataCode, (unsigned)ed);
-					this->m_queue.push(tmp_entry);
-					this->theQuery->threshold = this->m_queue.top().m_dist;
-					if (this->theQuery->threshold == 0) {
-						//this->stop = true;
-						return;
-					}
-
-					this->getIDBounds((int)this->theQuery->length, (int)this->theQuery->threshold, dataCode, idhigh);
-				}
+			for (unsigned j = 0; j < lists.size(); j++) {
+				iterlow = lists[j]->begin();
+				iterhigh = lists[j]->end();
+				for (; iterlow < iterhigh; iterlow++)
+					if (abs(similarGrams[i].first - (*iterlow).second) <= this->theQuery->threshold)
+						this->dataCount[ged][(*iterlow).first]++;
 			}
 		}
 	}
@@ -840,40 +863,222 @@ void CSeqDB<InvList>::knn_postprocess() {
 	}
 }
 
-// Accumulate the frequency of approximate ngrams
-// the largest value of ged is decided by upper gram length according to the CA strategy
 template <class InvList>
-void CSeqDB<InvList>::accumulateFrequency(long ged)
+void CSeqDB<InvList>::simple_initial(CQuery& query) {
+	int idlow, idhigh, ed;
+	this->processed = 0;
+	this->getIDBounds((int)query.length, 0, idlow, idhigh);
+	idhigh = idhigh >(idlow + (int)query.constraint) ? idhigh : ((idlow + (int)query.constraint) < (int)this->data->size() ? (idlow + (int)query.constraint) : (int)this->data->size());
+	idlow = idlow < (idhigh - (int)query.constraint) ? idlow : ((idhigh - (int)query.constraint)>0 ? (idhigh - (int)query.constraint) : 0);
+	for (; idlow <= idhigh; idlow++) {
+		if (this->m_queue.size() < query.constraint) {
+			ed = this->getRealEditDistance_nsd(this->data->at(idlow), query.sequence);
+			this->processedData[idlow] = true;
+			this->processed++;
+			this->m_queue.push(queue_entry(idlow, (unsigned)ed));
+			query.threshold = this->m_queue.top().m_dist;
+			continue;
+		}
+
+		if (query.threshold == 0) {
+			return;
+		}
+
+		break;
+	}
+	query.threshold = this->m_queue.top().m_dist;
+}
+
+//Accumulate the frequency for subString matching
+template <class InvList>
+void CSeqDB<InvList>::accmulateFrequencyForSubString(long ged)
 {
-	typename InvList::iterator iterlow, iterhigh;
+	vector<InvList*> lists;
+	vector< pair<int, vector<unsigned> > > similarGrams;
 
 	if (ged == 0) {
-		vector<InvList*> lists;
-		this->getGramLists(this->theQuery->gramCodes, this->gramListUpper, lists);
+		vector<unsigned> v;
+		for (unsigned i = 0; i < this->theQuery->gramCodes.size(); i++) {
+			v.clear();
+			v.push_back(this->theQuery->gramCodes[i].first);
+			similarGrams.push_back(make_pair(this->theQuery->gramCodes[i].second, v));
+		}
+	}
+	else {
+		this->gramQuery(*(this->theQuery), ged, similarGrams);
+	}
+
+	typename InvList::iterator iterlow, iterhigh;
+	for (unsigned j = 0; j < similarGrams.size(); j++) {
+		lists.clear();
+		this->getGramLists(similarGrams[j].second, this->gramListUpper, lists);
 
 		for (unsigned i = 0; i < lists.size(); i++) {
 			iterlow = lists[i]->begin();
 			iterhigh = lists[i]->end();
-			for (; iterlow != iterhigh; iterlow++)
-				if (abs(this->theQuery->gramCodes[i].second - (*iterlow).second) <= this->theQuery->threshold)
-					this->dataCount[ged][(*iterlow).first]++;
+			for (; iterlow < iterhigh; iterlow++) {
+				//pair<position in query, position in data>
+				this->stringPositionList[(*iterlow).first]->getArray()->push_back(make_pair(similarGrams[j].first, (*iterlow).second));
+				dataCount[ged][(*iterlow).first]++;
+			}
 		}
 	}
-	else {
-		vector<InvList*> lists;
-		vector< pair<int, vector<unsigned> > > similarGrams;
-		this->gramQuery(*(this->theQuery), ged, similarGrams);
-		
-		for (unsigned i = 0; i < similarGrams.size(); i++) {
-			vector<unsigned> v(similarGrams[i].second);
-			this->getGramLists(v, this->gramListUpper, lists);
+}
 
-			for (unsigned j = 0; j < lists.size(); j++) {
-				iterlow = lists[j]->begin();
-				iterhigh = lists[j]->end();
-				for (; iterlow != iterhigh; iterlow++)
-					if (abs(similarGrams[i].first - (*iterlow).second) <= this->theQuery->threshold)
-						this->dataCount[ged][(*iterlow).first]++;
+template <class InvList>
+void CSeqDB<InvList>::subString_process() {
+	bool checked;
+	unsigned i, j;
+	int appgram_count, idlow = 0, idhigh = this->data->size();
+
+	for (; idlow < idhigh; idlow++) {
+		if (!this->processedData[idlow]) {
+			if (this->dataCount[0][idlow] == 0) {
+				// Even do not have a similar gram
+				if (this->dataCount[1][idlow] == 0)
+					continue;
+				//approximate ngrams
+				this->post_cand.push_back(idlow);
+				continue;
+			}
+
+			// Check the bounds on approximate ngrams
+			checked = true;
+			appgram_count = 0;
+			for (i = 0; i < this->gram_maxed; i++) {
+				appgram_count += this->dataCount[i][idlow];
+				if (appgram_count < this->filter->tabUpQuery[this->theQuery->threshold][i]) {
+					checked = false;
+					break;
+				}
+			}
+
+			if (checked) {
+				this->processedData[idlow] = true;
+				this->processed++;
+				this->subMatching(idlow);
+				//there may exist such case: all the results in m_queue contains the exact query string
+				if (this->theQuery->threshold == 0)
+					return;
+			}
+		}
+	}
+
+	// Check approximate ngrams
+	for (j = 0; j < this->post_cand.size(); j++) {
+		checked = true;
+		appgram_count = 0;
+		for (i = 1; i < this->gram_maxed; i++) {
+			appgram_count += this->dataCount[i][post_cand[j]];
+			if (appgram_count < this->filter->tabUpQuery[this->theQuery->threshold][i]) {
+				checked = false;
+				break;
+			}
+		}
+
+		if (checked) {
+			this->processedData[post_cand[j]] = true;
+			this->processed++;
+			this->subMatching(post_cand[j]);
+		}
+	}
+}
+
+template <class InvList>
+void CSeqDB<InvList>::subMatching(unsigned id) {
+	unsigned len = this->data->at(id).length();
+	int ed = 0, minED = this->theQuery->threshold;
+
+	vector< pair<unsigned, unsigned> >::iterator iter;
+	//advanced version of sub string matchng
+	for (iter = this->stringPositionList[id]->getArray()->begin(); iter != this->stringPositionList[id]->getArray()->end(); iter++) {
+		if ((*iter).second < len - (this->theQuery->length - (*iter).first) + 1) {
+			if ((*iter).second < (*iter).first)
+				(*iter).second = 0;
+			else
+				(*iter).second -= (*iter).first;
+			string subString = this->data->at(id).substr((*iter).second, this->theQuery->length);
+			ed = getRealEditDistance_ns(subString, this->theQuery->sequence, minED);
+			minED = minED < ed ? minED : ed;
+			if (minED == 0)
+				break;
+		}
+	}
+
+	//initial version of sub string matching
+	/*
+	for (iter = this->stringPositionList[id]->getArray()->begin(); iter != this->stringPositionList[id]->getArray()->end(); iter++) {
+		if ((*iter).second < len - this->theQuery->length + 1) {
+			string subString = this->data->at(id).substr((*iter).second, this->theQuery->length);
+			ed = getRealEditDistance_ns(subString, this->theQuery->sequence, minED);
+			minED = minED < ed ? minED : ed;
+			if (minED == 0)
+				break;
+		}
+	}
+	*/
+
+	if (minED != this->theQuery->threshold) {
+		this->m_queue.pop();
+		this->m_queue.push(queue_entry(id, (unsigned)minED));
+		this->theQuery->threshold = this->m_queue.top().m_dist;
+	}
+}
+
+template <class InvList>
+void CSeqDB<InvList>::allinoneSubString_process() {
+	vector<InvList*> lists;
+	for (unsigned i = 0; i < this->theQuery->gramCodes.size(); i++) {
+		this->getGramLists(this->theQuery->gramCodes, this->gramListUpper, lists);
+	}
+
+	typename InvList::iterator iterlow, iterhigh;
+	for (unsigned i = 0; i < lists.size(); i++) {
+		iterlow = lists[i]->begin();
+		iterhigh = lists[i]->end();
+		for (; iterlow < iterhigh; iterlow++) {
+			if (this->processedData[(*iterlow).first])
+				continue;
+
+			//pair<position in query, position in data>
+			this->stringPositionList[(*iterlow).first]->getArray()->push_back(make_pair(i, (*iterlow).second));
+
+			if (++dataCount[0][(*iterlow).first] >= this->filter->tabUpQuery[this->theQuery->threshold][0]) {
+				this->processedData[(*iterlow).first] = true;
+				this->processed++;
+				this->subMatching((*iterlow).first);
+				//there may exist such case: all the results in m_queue contains the exact query string
+				if (this->theQuery->threshold == 0)
+					return;
+			}
+		}
+	}
+
+	vector< pair<int, vector<unsigned> > > similarGrams;
+	this->gramQuery(*(this->theQuery), 1, similarGrams);
+
+	for (unsigned j = 0; j < similarGrams.size(); j++) {
+		lists.clear();
+		this->getGramLists(similarGrams[j].second, this->gramListUpper, lists);
+
+		for (unsigned i = 0; i < lists.size(); i++) {
+			iterlow = lists[i]->begin();
+			iterhigh = lists[i]->end();
+			for (; iterlow < iterhigh; iterlow++) {
+				if (this->processedData[(*iterlow).first])
+					continue;
+
+				//pair<position in query, position in data>
+				this->stringPositionList[(*iterlow).first]->getArray()->push_back(make_pair(similarGrams[j].first, (*iterlow).second));
+
+				if (++dataCount[1][(*iterlow).first] + dataCount[0][(*iterlow).first] >= this->filter->tabUpQuery[this->theQuery->threshold][1]) {
+					this->processedData[(*iterlow).first] = true;
+					this->processed++;
+					this->subMatching((*iterlow).first);
+					//there may exist such case: all the results in m_queue contains the exact query string
+					if (this->theQuery->threshold == 0)
+						return;
+				}
 			}
 		}
 	}
@@ -896,6 +1101,51 @@ void CSeqDB<InvList>::getIDBounds(const int querysize, const int threshold, int&
 		idhigh = (int)((*_iterHigh).m_sid);
 	}else {
 		idhigh = this->datasizes.back().m_sid;
+	}
+}
+
+//knn_postprocess, older version, until 2015-11-25
+template <class InvList>
+void CSeqDB<InvList>::old_version_knn_postprocess() {
+	int ed, idlow, idhigh;
+	//unsigned j;
+	idlow = idhigh = -1;
+	this->getIDBounds((int)this->theQuery->length, (int)this->theQuery->threshold, idlow, idhigh);
+
+	if (idlow <= idhigh) {
+		for (int dataCode = idlow; dataCode <= idhigh; dataCode++) {
+			if (this->processedData[dataCode])
+				continue;
+
+			if (this->m_queue.size() < this->theQuery->constraint) {
+				ed = this->getRealEditDistance_nsd(this->data->at(dataCode), this->theQuery->sequence);
+				this->processedData[dataCode] = true;
+				this->processed++;
+				this->m_queue.push(queue_entry(dataCode, (unsigned)ed));
+				this->theQuery->threshold = this->m_queue.top().m_dist;
+				continue;
+			}
+
+			// Check the bounds on approximate ngrams
+			if (!this->processedData[dataCode] && (int)this->dataCount[0][dataCode] >= this->filter->tabUpQuery[this->theQuery->threshold][0]) {
+				ed = this->getRealEditDistance_ns(this->data->at(dataCode), this->theQuery->sequence, (int)this->theQuery->threshold);
+				this->processedData[dataCode] = true;
+				this->processed++;
+				if (ed < (int)this->theQuery->threshold) {
+					if (this->m_queue.size() == this->theQuery->constraint)
+						this->m_queue.pop();
+					queue_entry tmp_entry(dataCode, (unsigned)ed);
+					this->m_queue.push(tmp_entry);
+					this->theQuery->threshold = this->m_queue.top().m_dist;
+					if (this->theQuery->threshold == 0) {
+						//this->stop = true;
+						return;
+					}
+
+					this->getIDBounds((int)this->theQuery->length, (int)this->theQuery->threshold, dataCode, idhigh);
+				}
+			}
+		}
 	}
 }
 

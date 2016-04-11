@@ -25,17 +25,18 @@ class CGramList {
   void clear() { }
 };
 
-//not used
-/*
-template<class InvList = vector<unsigned> >
-class QueryGramList {
-public:
-  unsigned gramCode;
-  CGramList<InvList>* gl;  
 
-  QueryGramList(unsigned gramCode, CGramList<InvList>* gl)
-    : gramCode(gramCode), gl(gl) {}
+class SPositionList {
+protected:
+	vector< pair<unsigned, unsigned> > positionList;
+
+public:
+	SPositionList() {};
+	vector< pair<unsigned, unsigned> >* getArray() { return &positionList; }
+	~SPositionList() {};
+	void free() { delete this; }
+	void clear() { }
 };
-*/
+
 
 #endif

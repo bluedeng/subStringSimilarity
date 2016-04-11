@@ -4,7 +4,7 @@ CFLAGS=-c
 
 OFILES = time.o gram.o list.o filtb.o query.o db.o
 
-all:topkPositionSearch
+all:topkPositionSearch topkSubStringMatching
 
 rebuild:clean all
 	
@@ -14,8 +14,14 @@ clean:
 topkPositionSearch:${OFILES} topkPositionSearch.o
 	${CC} -o $@ ${OFILES} topkPositionSearch.o -lpthread
 
+topkSubStringMatching:${OFILES} topkSubStringMatching.o
+	${CC} -o $@ ${OFILES} topkSubStringMatching.o -lpthread
+
 # ------------------------------------------
 topkPositionSearch.o:topkPositionSearch.cpp
+	${CC} ${CFLAGS} $< -o $@ ${INCLUDE}
+
+topkSubStringMatching.o:topkSubStringMatching.cpp
 	${CC} ${CFLAGS} $< -o $@ ${INCLUDE}
 
 # COMMON OBJECT FILES

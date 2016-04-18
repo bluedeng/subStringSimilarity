@@ -988,6 +988,7 @@ template <class InvList>
 void CSeqDB<InvList>::subMatching(unsigned id) {
 	unsigned len = this->data->at(id).length();
 	int ed = 0, minED = this->theQuery->threshold;
+	set<int> position;
 
 	vector< pair<unsigned, unsigned> >::iterator iter;
 	//advanced version of sub string matchng
@@ -997,12 +998,25 @@ void CSeqDB<InvList>::subMatching(unsigned id) {
 				(*iter).second = 0;
 			else
 				(*iter).second -= (*iter).first;
+			//put the position of sub string into a set, avoid dupliacte
+			position.insert((*iter).second);
+			/*
 			string subString = this->data->at(id).substr((*iter).second, this->theQuery->length);
 			ed = getRealEditDistance_ns(subString, this->theQuery->sequence, minED);
 			minED = minED < ed ? minED : ed;
 			if (minED == 0)
 				break;
+			*/
 		}
+	}
+
+	//check positions in set
+	for (set<int>::iterator s = position.begin(); s != position.end(); s++) {
+		string subString = this->data->at(id).substr((*s), this->theQuery->length);
+		ed = getRealEditDistance_ns(subString, this->theQuery->sequence, minED);
+		minED = minED < ed ? minED : ed;
+		if (minED == 0)
+			break;
 	}
 
 	//initial version of sub string matching

@@ -101,10 +101,12 @@
     <ClCompile Include="Gram.cpp" />
     <ClCompile Include="GramList.cpp" />
     <ClCompile Include="Query.cpp" />
+    <ClCompile Include="rangeSubStringMatch.cpp" />
     <ClCompile Include="SeqDB.cpp" />
     <ClCompile Include="Time.cpp" />
     <ClCompile Include="topkPositionSearch.cpp" />
-    <ClCompile Include="topkSubStringMatching.cpp" />
+    <ClCompile Include="topkSubStringMatch_app.cpp" />
+    <ClCompile Include="topkSubStringMatch_exa.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="CountFilter.h" />

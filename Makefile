@@ -4,7 +4,7 @@ CFLAGS=-c
 
 OFILES = time.o gram.o list.o filtb.o query.o db.o
 
-all:topkPositionSearch topkSubStringMatching
+all:topkPositionSearch topkSubStringMatch_app topkSubStringMatch_exa rangeSubStringMatch
 
 rebuild:clean all
 	
@@ -14,14 +14,26 @@ clean:
 topkPositionSearch:${OFILES} topkPositionSearch.o
 	${CC} -o $@ ${OFILES} topkPositionSearch.o -lpthread
 
-topkSubStringMatching:${OFILES} topkSubStringMatching.o
-	${CC} -o $@ ${OFILES} topkSubStringMatching.o -lpthread
+topkSubStringMatch_app:${OFILES} topkSubStringMatch_app.o
+	${CC} -o $@ ${OFILES} topkSubStringMatch_app.o -lpthread
+
+topkSubStringMatch_exa:${OFILES} topkSubStringMatch_exa.o
+	${CC} -o $@ ${OFILES} topkSubStringMatch_exa.o -lpthread
+
+rangeSubStringMatch:${OFILES} rangeSubStringMatch.o
+	${CC} -o $@ ${OFILES} rangeSubStringMatch.o -lpthread
 
 # ------------------------------------------
 topkPositionSearch.o:topkPositionSearch.cpp
 	${CC} ${CFLAGS} $< -o $@ ${INCLUDE}
 
-topkSubStringMatching.o:topkSubStringMatching.cpp
+topkSubStringMatch_app.o:topkSubStringMatch_app.cpp
+	${CC} ${CFLAGS} $< -o $@ ${INCLUDE}
+
+topkSubStringMatch_exa.o:topkSubStringMatch_exa.cpp
+	${CC} ${CFLAGS} $< -o $@ ${INCLUDE}
+
+rangeSubStringMatch.o:rangeSubStringMatch.cpp
 	${CC} ${CFLAGS} $< -o $@ ${INCLUDE}
 
 # COMMON OBJECT FILES

@@ -271,16 +271,30 @@ public:
 	void gramQuery(const CQuery& query, const unsigned ged, vector< pair<int, vector<unsigned> > >& similarGrams);
 	void getIDBounds(const int querysize, const int threshold, int& idlow, int& idhigh);
 
-	//The fuction for pipe knn search
+	//The fuction for pipe knn positional search
 	void init_threshold(CQuery& query);
 	void accumulateFrequency(long ged);
 	void knn_postprocess();
 
 	//The function for subStringMatching
-	void simple_initial(CQuery& query);
+	void subString_initial_exact(CQuery& query);
+	void subString_initial_approximate(CQuery& query);
+	//similar to ed_calculation but for sub string
+	int subRough_nsd(CQuery& query, unsigned id);
+	int subRough_ns(CQuery& query, unsigned id);
 	void accmulateFrequencyForSubString(long ged);
 	void subString_process();
+	//similar to old_version_knn_postprocess but for sub string
+	void tail_process();
+	//for sub string ed calculation after accmulating
 	void subMatching(unsigned id);
+
+	//The function for range subStringMatching
+	void subString_range(int threshold);
+	void subMatching_range(unsigned id);
+
+	void processedNumber();
+
 	//all-in-one one-level subStringMatching
 	void allinoneSubString_process();
 
@@ -662,7 +676,39 @@ void CSeqDB<InvList>::init_threshold(CQuery& query) {
 			}
 		}
 	}
-	query.threshold = this->m_queue.top().m_dist;
+
+	int i = 1;
+	while (i) {
+		this->getIDBounds((int)query.length, i, idlow, idhigh);
+		idhigh = idhigh >(idlow + (int)query.constraint) ? idhigh : ((idlow + (int)query.constraint) < (int)this->data->size() ? (idlow + (int)query.constraint) : (int)this->data->size());
+		idlow = idlow < (idhigh - (int)query.constraint) ? idlow : ((idhigh - (int)query.constraint)>0 ? (idhigh - (int)query.constraint) : 0);
+
+		bool flag = false;
+		if (idlow == 0 && idhigh == this->data->size() - 1)
+			flag = true;
+
+		for (; idlow<idhigh; idlow++) {
+			if (this->m_queue.size() < query.constraint) {
+				ed = this->getRealEditDistance_nsd(this->data->at(idlow), query.sequence);
+				this->processedData[idlow] = true;
+				this->processed++;
+				this->m_queue.push(queue_entry(idlow, (unsigned)ed));
+				query.threshold = this->m_queue.top().m_dist;
+				continue;
+			}
+
+			if (query.threshold == 0) {
+				return;
+			}
+
+			return;
+		}
+
+		if (flag)
+			return;
+
+		i++;
+	}
 }
 
 // Accumulate the frequency of approximate ngrams
@@ -864,7 +910,7 @@ void CSeqDB<InvList>::knn_postprocess() {
 }
 
 template <class InvList>
-void CSeqDB<InvList>::simple_initial(CQuery& query) {
+void CSeqDB<InvList>::subString_initial_exact(CQuery& query) {
 	int idlow, idhigh, ed;
 	this->processed = 0;
 	this->getIDBounds((int)query.length, 0, idlow, idhigh);
@@ -872,7 +918,7 @@ void CSeqDB<InvList>::simple_initial(CQuery& query) {
 	idlow = idlow < (idhigh - (int)query.constraint) ? idlow : ((idhigh - (int)query.constraint)>0 ? (idhigh - (int)query.constraint) : 0);
 	for (; idlow <= idhigh; idlow++) {
 		if (this->m_queue.size() < query.constraint) {
-			ed = this->getRealEditDistance_nsd(this->data->at(idlow), query.sequence);
+			ed = this->subRough_nsd(query, idlow);
 			this->processedData[idlow] = true;
 			this->processed++;
 			this->m_queue.push(queue_entry(idlow, (unsigned)ed));
@@ -884,9 +930,89 @@ void CSeqDB<InvList>::simple_initial(CQuery& query) {
 			return;
 		}
 
-		break;
+		ed = this->subRough_ns(query, idlow);
+		this->processedData[idlow] = true;
+		this->processed++;
+		if (ed < (int)query.threshold) {
+			this->m_queue.pop();
+			this->m_queue.push(queue_entry(idlow, (unsigned)ed));
+			query.threshold = this->m_queue.top().m_dist;
+			if (query.threshold == 0) {
+				return;
+			}
+		}
 	}
-	query.threshold = this->m_queue.top().m_dist;
+
+	int i = 1;
+	while (i) {
+		this->getIDBounds((int)query.length, i, idlow, idhigh);
+		idhigh = idhigh >(idlow + (int)query.constraint) ? idhigh : ((idlow + (int)query.constraint) < (int)this->data->size() ? (idlow + (int)query.constraint) : (int)this->data->size());
+		idlow = idlow < (idhigh - (int)query.constraint) ? idlow : ((idhigh - (int)query.constraint)>0 ? (idhigh - (int)query.constraint) : 0);
+
+		bool flag = false;
+		if (idlow == 0 && idhigh == this->data->size() - 1)
+			flag = true;
+
+		for (; idlow<idhigh; idlow++) {
+			if (this->m_queue.size() < query.constraint) {
+				ed = this->subRough_ns(query, idlow);
+				this->processedData[idlow] = true;
+				this->processed++;
+				this->m_queue.push(queue_entry(idlow, (unsigned)ed));
+				query.threshold = this->m_queue.top().m_dist;
+				continue;
+			}
+
+			if (query.threshold == 0) {
+				return;
+			}
+
+			return;
+		}
+
+		if (flag)
+			return;
+
+		i++;
+	}
+}
+
+template <class InvList>
+void CSeqDB<InvList>::subString_initial_approximate(CQuery& query) {
+	int idlow, idhigh, ed;
+	this->processed = 0;
+	int i = 0;
+	while (true) {
+		this->getIDBounds((int)query.length, i, idlow, idhigh);
+		idhigh = idhigh >(idlow + (int)query.constraint) ? idhigh : ((idlow + (int)query.constraint) < (int)this->data->size() ? (idlow + (int)query.constraint) : (int)this->data->size());
+		idlow = idlow < (idhigh - (int)query.constraint) ? idlow : ((idhigh - (int)query.constraint)>0 ? (idhigh - (int)query.constraint) : 0);
+
+		bool flag = false;
+		if (idlow == 0 && idhigh == this->data->size() - 1)
+			flag = true;
+
+		for (; idlow<idhigh; idlow++) {
+			if (this->m_queue.size() < query.constraint) {
+				ed = this->subRough_nsd(query, idlow);
+				this->processedData[idlow] = true;
+				this->processed++;
+				this->m_queue.push(queue_entry(idlow, (unsigned)ed));
+				query.threshold = this->m_queue.top().m_dist;
+				continue;
+			}
+
+			if (query.threshold == 0) {
+				return;
+			}
+
+			return;
+		}
+
+		if (flag)
+			return;
+
+		i++;
+	}
 }
 
 //Accumulate the frequency for subString matching
@@ -982,6 +1108,8 @@ void CSeqDB<InvList>::subString_process() {
 			this->subMatching(post_cand[j]);
 		}
 	}
+
+	this->processedNumber();
 }
 
 template <class InvList>
@@ -990,53 +1118,163 @@ void CSeqDB<InvList>::subMatching(unsigned id) {
 	int ed = 0, minED = this->theQuery->threshold;
 	set<int> position;
 
-	vector< pair<unsigned, unsigned> >::iterator iter;
-	//advanced version of sub string matchng
-	for (iter = this->stringPositionList[id]->getArray()->begin(); iter != this->stringPositionList[id]->getArray()->end(); iter++) {
-		if ((*iter).second < len - (this->theQuery->length - (*iter).first) + 1) {
-			if ((*iter).second < (*iter).first)
-				(*iter).second = 0;
-			else
-				(*iter).second -= (*iter).first;
-			//put the position of sub string into a set, avoid dupliacte
-			position.insert((*iter).second);
-			/*
-			string subString = this->data->at(id).substr((*iter).second, this->theQuery->length);
+	if (len <= this->theQuery->length) {
+		ed = getRealEditDistance_ns(this->data->at(id), this->theQuery->sequence, minED);
+		minED = minED < ed ? minED : ed;
+	}
+	else {
+		vector< pair<unsigned, unsigned> >::iterator iter;
+		//advanced version of sub string matchng
+		for (iter = this->stringPositionList[id]->getArray()->begin(); iter != this->stringPositionList[id]->getArray()->end(); iter++) {
+			if ((*iter).second < len - (this->theQuery->length - (*iter).first) + 1) {
+				if ((*iter).second < (*iter).first)
+					(*iter).second = 0;
+				else
+					(*iter).second -= (*iter).first;
+				//put the position of sub string into a set, avoid dupliacte
+				position.insert((*iter).second);
+				/*
+				string subString = this->data->at(id).substr((*iter).second, this->theQuery->length);
+				ed = getRealEditDistance_ns(subString, this->theQuery->sequence, minED);
+				minED = minED < ed ? minED : ed;
+				if (minED == 0)
+				break;
+				*/
+			}
+		}
+
+		//check positions in set
+		for (set<int>::iterator s = position.begin(); s != position.end(); s++) {
+			string subString = this->data->at(id).substr((*s), this->theQuery->length);
 			ed = getRealEditDistance_ns(subString, this->theQuery->sequence, minED);
 			minED = minED < ed ? minED : ed;
 			if (minED == 0)
 				break;
-			*/
 		}
-	}
 
-	//check positions in set
-	for (set<int>::iterator s = position.begin(); s != position.end(); s++) {
-		string subString = this->data->at(id).substr((*s), this->theQuery->length);
+		//initial version of sub string matching
+		/*
+		for (iter = this->stringPositionList[id]->getArray()->begin(); iter != this->stringPositionList[id]->getArray()->end(); iter++) {
+		if ((*iter).second < len - this->theQuery->length + 1) {
+		string subString = this->data->at(id).substr((*iter).second, this->theQuery->length);
 		ed = getRealEditDistance_ns(subString, this->theQuery->sequence, minED);
 		minED = minED < ed ? minED : ed;
 		if (minED == 0)
-			break;
-	}
-
-	//initial version of sub string matching
-	/*
-	for (iter = this->stringPositionList[id]->getArray()->begin(); iter != this->stringPositionList[id]->getArray()->end(); iter++) {
-		if ((*iter).second < len - this->theQuery->length + 1) {
-			string subString = this->data->at(id).substr((*iter).second, this->theQuery->length);
-			ed = getRealEditDistance_ns(subString, this->theQuery->sequence, minED);
-			minED = minED < ed ? minED : ed;
-			if (minED == 0)
-				break;
+		break;
 		}
+		}
+		*/
 	}
-	*/
 
 	if (minED != this->theQuery->threshold) {
 		this->m_queue.pop();
 		this->m_queue.push(queue_entry(id, (unsigned)minED));
 		this->theQuery->threshold = this->m_queue.top().m_dist;
 	}
+}
+
+template <class InvList>
+int CSeqDB<InvList>::subRough_nsd(CQuery& query, unsigned id) {
+	int len = query.length;
+	string s = this->data->at(id);
+
+	if (len > s.length())
+		return this->getRealEditDistance_nsd(query.sequence, s);
+	else {
+		int min_sub_ed = len;
+		for (unsigned i = 0; i < s.length() - len + 1; i++) {
+			int sub_ed = this->getRealEditDistance_ns(query.sequence, s.substr(i, len), min_sub_ed);
+			min_sub_ed = min_sub_ed < sub_ed ? min_sub_ed : sub_ed;
+		}
+		return min_sub_ed;
+	}
+}
+
+template <class InvList>
+int CSeqDB<InvList>::subRough_ns(CQuery& query, unsigned id) {
+	int len = query.length;
+	string s = this->data->at(id);
+
+	if (len > s.length())
+		return this->getRealEditDistance_ns(query.sequence, s, query.threshold);
+	else {
+		int min_sub_ed = query.threshold;
+		for (unsigned i = 0; i < s.length() - len + 1; i++) {
+			int sub_ed = this->getRealEditDistance_ns(query.sequence, s.substr(i, len), min_sub_ed);
+			min_sub_ed = min_sub_ed < sub_ed ? min_sub_ed : sub_ed;
+		}
+		return min_sub_ed;
+	}
+}
+
+template <class InvList>
+void CSeqDB<InvList>::tail_process() {
+	int idlow = 0, idhigh = this->data->size();
+
+	for (; idlow < idhigh; idlow++) {
+		if (this->processedData[idlow])
+			continue;
+
+		if ((int)this->dataCount[0][idlow] >= this->filter->tabUpQuery[this->theQuery->threshold][0]) {
+			this->processedData[idlow] = true;
+			this->processed++;
+			this->subMatching(idlow);
+		}
+	}
+
+	this->processedNumber();
+}
+
+template <class InvList>
+void CSeqDB<InvList>::subString_range(int threshold) {
+	this->theQuery->threshold = threshold;
+
+	for (unsigned i = 0; i < this->data->size(); i++)
+		if (this->dataCount[0][i] >= this->filter->tabUpQuery[threshold][0] || this->dataCount[1][i] >= this->filter->tabUpQuery[threshold][1]) {
+			this->processedData[i] = true;
+			this->processed++;
+			this->subMatching_range(i);
+		}
+
+	this->processedNumber();
+}
+
+template <class InvList>
+void CSeqDB<InvList>::subMatching_range(unsigned id) {
+	unsigned len = this->data->at(id).length();
+	int ed = 0, minED = len;
+	set<int> position;
+
+	if (len <= this->theQuery->length) {
+		ed = getRealEditDistance_ns(this->data->at(id), this->theQuery->sequence, this->theQuery->threshold);
+		minED = minED < ed ? minED : ed;
+	}
+	else {
+		vector< pair<unsigned, unsigned> >::iterator iter;
+
+		for (iter = this->stringPositionList[id]->getArray()->begin(); iter != this->stringPositionList[id]->getArray()->end(); iter++) {
+			if ((*iter).second < len - (this->theQuery->length - (*iter).first) + 1) {
+				if ((*iter).second < (*iter).first)
+					(*iter).second = 0;
+				else
+					(*iter).second -= (*iter).first;
+				//put the position of sub string into a set, avoid dupliacte
+				position.insert((*iter).second);
+			}
+		}
+
+		//check positions in set
+		for (set<int>::iterator s = position.begin(); s != position.end(); s++) {
+			string subString = this->data->at(id).substr((*s), this->theQuery->length);
+			ed = getRealEditDistance_ns(subString, this->theQuery->sequence, this->theQuery->threshold);
+			minED = minED < ed ? minED : ed;
+			if (minED == 0)
+				break;
+		}
+	}
+
+	if (minED <= this->theQuery->threshold)
+		this->m_queue.push(queue_entry(id, (unsigned)minED));
 }
 
 template <class InvList>
@@ -1131,6 +1369,7 @@ void CSeqDB<InvList>::old_version_knn_postprocess() {
 			if (this->processedData[dataCode])
 				continue;
 
+			/*
 			if (this->m_queue.size() < this->theQuery->constraint) {
 				ed = this->getRealEditDistance_nsd(this->data->at(dataCode), this->theQuery->sequence);
 				this->processedData[dataCode] = true;
@@ -1139,9 +1378,10 @@ void CSeqDB<InvList>::old_version_knn_postprocess() {
 				this->theQuery->threshold = this->m_queue.top().m_dist;
 				continue;
 			}
+			*/
 
-			// Check the bounds on approximate ngrams
-			if (!this->processedData[dataCode] && (int)this->dataCount[0][dataCode] >= this->filter->tabUpQuery[this->theQuery->threshold][0]) {
+			// Check the bounds on exact ngrams
+			if ((int)this->dataCount[0][dataCode] >= this->filter->tabUpQuery[this->theQuery->threshold][0]) {
 				ed = this->getRealEditDistance_ns(this->data->at(dataCode), this->theQuery->sequence, (int)this->theQuery->threshold);
 				this->processedData[dataCode] = true;
 				this->processed++;
@@ -1156,11 +1396,24 @@ void CSeqDB<InvList>::old_version_knn_postprocess() {
 						return;
 					}
 
-					this->getIDBounds((int)this->theQuery->length, (int)this->theQuery->threshold, dataCode, idhigh);
+					this->getIDBounds((int)this->theQuery->length, (int)this->theQuery->threshold, idlow, idhigh);
+					dataCode = dataCode > idlow ? dataCode : idlow;
 				}
 			}
 		}
 	}
+
+	this->processedNumber();
+}
+
+template <class InvList>
+void CSeqDB<InvList>::processedNumber() {
+	int number = 0;
+	for (unsigned i = 0; i < this->data->size(); i++)
+		if (this->processedData[i])
+			number++;
+
+	this->processed = number;
 }
 
 #endif /* _SEQDB_H_ */

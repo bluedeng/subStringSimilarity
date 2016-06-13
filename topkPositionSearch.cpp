@@ -46,9 +46,7 @@ void usage()
 	fprintf(stdout,"SSEARCH 1.0 Copyright 2010, NUS, Singapore\n");
 	fprintf(stdout,"Sequence search algorithms based on CA\n");
 	fprintf(stdout,"----------------------------------------------\n\n");
-	fprintf(stdout,"Usage: psearch [OPTION] ${INPUTDB} ${QUERY}\n");
-//	fprintf(stdout,"-k --integer\n   k value (default by 1).\n");
-//	fprintf(stdout,"-f --integer\n   k value for the f-queue (default by 1).\n");
+	fprintf(stdout,"Usage: topkPositionSearch [OPTION] ${INPUTDB} ${QUERY}\n");
 	fprintf(stdout,"-o\n   ouput the result set of sequence ids.\n");
 	fprintf(stdout, "We will process the topK for 5, 10, 20, 30, 40 \n");
 	fprintf(stdout,"\n----------------------------------------------\n");
@@ -184,6 +182,7 @@ int pipe_knn(CQuery* query) {
 			// Try post precessing here with more approximate bounds
 			class TSINGHUA_CLIPSE_UTIL::TimeRecorder _time;
 			pThis->knn_postprocess();
+			pThis->old_version_knn_postprocess();
 			_time.check();
 			query_time += _time.diffTime(0, 1);
 			// Then end of whole processing here

@@ -36,7 +36,13 @@
     <ClCompile Include="topkPositionSearch.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="topkSubStringMatching.cpp">
+    <ClCompile Include="topkSubStringMatch_app.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="topkSubStringMatch_exa.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="rangeSubStringMatch.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
